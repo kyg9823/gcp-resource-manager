@@ -1,16 +1,12 @@
-package api
+package handler
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log"
-	"net/http"
 	"strings"
 
 	compute "cloud.google.com/go/compute/apiv1"
-	"github.com/kyg9823/gcp-resource-manager/config"
-	"github.com/kyg9823/gcp-resource-manager/types"
+	"github.com/gofiber/fiber/v2"
 	"google.golang.org/api/iterator"
 	computepb "google.golang.org/genproto/googleapis/cloud/compute/v1"
 	"google.golang.org/protobuf/proto"
@@ -22,23 +18,31 @@ type InstanceInfo struct {
 	Instance string
 }
 
-func GceManager(w http.ResponseWriter, r *http.Request) {
-	projectId, _ := config.GetProjectId()
+type GceManagerParam struct {
+	Action string `query:"action"`
+}
 
-	action := r.URL.Query().Get("action")
-	if action == "" {
-		action = "stop"
+func GceStateManager(ctx *fiber.Ctx) error {
+	projectId := ctx.Params("ProjectId")
+
+	param := new(GceManagerParam)
+	if err := ctx.QueryParser(param); err != nil {
+		return err
 	}
 
-	ctx := context.Background()
-	instanceClient, err := compute.NewInstancesRESTClient(ctx)
+	if param.Action == "" {
+		param.Action = "stop"
+	}
+
+	c := context.Background()
+	instanceClient, err := compute.NewInstancesRESTClient(c)
 	if err != nil {
 		log.Printf("Fail to get Instance Client")
-		return
+		return err
 	}
 	defer instanceClient.Close()
 
-	filter := "labels.auto-" + action + " = true"
+	filter := "labels.auto-" + param.Action + " = true"
 
 	req := &computepb.AggregatedListInstancesRequest{
 		Project:    projectId,
@@ -46,7 +50,7 @@ func GceManager(w http.ResponseWriter, r *http.Request) {
 		Filter:     &filter,
 	}
 
-	it := instanceClient.AggregatedList(ctx, req)
+	it := instanceClient.AggregatedList(c, req)
 	log.Printf("Instances found:\n")
 
 	for {
@@ -55,19 +59,19 @@ func GceManager(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if err != nil {
-			return
+			return err
 		}
 		instances := pair.Value.Instances
 		if len(instances) > 0 {
 			for _, instance := range instances {
-				if action == "start" {
-					startInstance(ctx, instanceClient, &InstanceInfo{
+				if param.Action == "start" {
+					startInstance(c, instanceClient, &InstanceInfo{
 						Project:  projectId,
 						Zone:     instance.GetZone()[strings.LastIndex(instance.GetZone(), "/")+1:],
 						Instance: instance.GetName(),
 					})
 				} else {
-					stopInstance(ctx, instanceClient, &InstanceInfo{
+					stopInstance(c, instanceClient, &InstanceInfo{
 						Project:  projectId,
 						Zone:     instance.GetZone()[strings.LastIndex(instance.GetZone(), "/")+1:],
 						Instance: instance.GetName(),
@@ -77,16 +81,12 @@ func GceManager(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result := &types.Result{
-		StatusCode: 200,
-		Message:    "OK",
-	}
-	if err := json.NewEncoder(w).Encode(result); err != nil {
-		log.Printf("error encoding response: %v", err)
-		http.Error(w, "Could not marshal JSON output", 500)
-		return
-	}
-	fmt.Fprint(w)
+	message := "OK"
+
+	return ctx.JSON(fiber.Map{
+		"status":  200,
+		"message": message,
+	})
 }
 
 func startInstance(ctx context.Context, instanceClient *compute.InstancesClient, instanceInfo *InstanceInfo) {

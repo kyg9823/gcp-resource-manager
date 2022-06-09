@@ -7,10 +7,11 @@ COPY . ./
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -o output
 
+FROM alpine:3.6 as alpine
+RUN apk add -U --no-cache ca-certificates
+
 FROM scratch
 COPY --from=builder /app/output/ /gcp-resource-manager
-# COPY serviceaccount.json /serviceaccount.json
-# ENV GOOGLE_APPLICATION_CREDENTIALS serviceaccount.json
-# ENV PROJECT_ID $projectId
+COPY --from=alpine /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 CMD ["/gcp-resource-manager"]
