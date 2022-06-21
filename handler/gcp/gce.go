@@ -13,9 +13,11 @@ import (
 )
 
 type InstanceInfo struct {
-	Project  string
-	Zone     string
-	Instance string
+	Project           string
+	Zone              string
+	Instance          string
+	InstanceGroupName string
+	Size              int32
 }
 
 type GceManagerParam struct {
@@ -42,6 +44,13 @@ func GceStateManager(ctx *fiber.Ctx) error {
 	}
 	defer instanceClient.Close()
 
+	instanceGroupManager, err := compute.NewInstanceGroupManagersRESTClient(c)
+	if err != nil {
+		log.Printf("Fail to get Instance Group Manager Client")
+		return err
+	}
+	defer instanceGroupManager.Close()
+
 	filter := "labels.auto-" + param.Action + " = true"
 
 	req := &computepb.AggregatedListInstancesRequest{
@@ -64,18 +73,33 @@ func GceStateManager(ctx *fiber.Ctx) error {
 		instances := pair.Value.Instances
 		if len(instances) > 0 {
 			for _, instance := range instances {
-				if param.Action == "start" {
-					startInstance(c, instanceClient, &InstanceInfo{
-						Project:  projectId,
-						Zone:     instance.GetZone()[strings.LastIndex(instance.GetZone(), "/")+1:],
-						Instance: instance.GetName(),
-					})
+				instanceGroup := getMetadata(instance.Metadata.Items, "created-by")
+				if instanceGroup != "" {
+					instanceInfo := &InstanceInfo{
+						Project:           projectId,
+						Zone:              instance.GetZone()[strings.LastIndex(instance.GetZone(), "/")+1:],
+						Instance:          instance.GetName(),
+						InstanceGroupName: instanceGroup[strings.LastIndex(instanceGroup, "/")+1:],
+						Size:              0,
+					}
+					if param.Action == "start" {
+						instanceInfo.Size = 1
+					}
+					resizeInstanceGroup(c, instanceGroupManager, instanceInfo)
 				} else {
-					stopInstance(c, instanceClient, &InstanceInfo{
-						Project:  projectId,
-						Zone:     instance.GetZone()[strings.LastIndex(instance.GetZone(), "/")+1:],
-						Instance: instance.GetName(),
-					})
+					if param.Action == "start" {
+						startInstance(c, instanceClient, &InstanceInfo{
+							Project:  projectId,
+							Zone:     instance.GetZone()[strings.LastIndex(instance.GetZone(), "/")+1:],
+							Instance: instance.GetName(),
+						})
+					} else {
+						stopInstance(c, instanceClient, &InstanceInfo{
+							Project:  projectId,
+							Zone:     instance.GetZone()[strings.LastIndex(instance.GetZone(), "/")+1:],
+							Instance: instance.GetName(),
+						})
+					}
 				}
 			}
 		}
@@ -87,6 +111,19 @@ func GceStateManager(ctx *fiber.Ctx) error {
 		"status":  200,
 		"message": message,
 	})
+}
+
+func getMetadata(items []*computepb.Items, key string) string {
+	result := ""
+
+	for _, item := range items {
+		if *item.Key == key {
+			result = *item.Value
+			break
+		}
+	}
+
+	return result
 }
 
 func startInstance(ctx context.Context, instanceClient *compute.InstancesClient, instanceInfo *InstanceInfo) {
@@ -125,4 +162,26 @@ func stopInstance(ctx context.Context, instanceClient *compute.InstancesClient, 
 	}
 
 	log.Printf("Instance stopped\n")
+}
+
+func resizeInstanceGroup(ctx context.Context, instanceGroupManager *compute.InstanceGroupManagersClient, instanceInfo *InstanceInfo) {
+	req := &computepb.ResizeInstanceGroupManagerRequest{
+		InstanceGroupManager: instanceInfo.InstanceGroupName,
+		Project:              instanceInfo.Project,
+		Zone:                 instanceInfo.Zone,
+		Size:                 0,
+	}
+
+	op, err := instanceGroupManager.Resize(ctx, req)
+	if err != nil {
+		log.Printf("Failed to resize Instance Group \n")
+	}
+
+	if err = op.Wait(ctx); err != nil {
+		log.Printf("unable to wait for the operation: %v\n", err)
+	}
+
+	log.Printf("Resize Complete\n")
+	log.Printf("%v", instanceInfo)
+
 }

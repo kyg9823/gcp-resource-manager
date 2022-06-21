@@ -38,11 +38,15 @@ gcloud iam service-accounts add-iam-policy-binding gcp-resource-manager@${PROJEC
 
 ```bash
 gcloud run deploy gcp-resource-manager \
---image=$ImageName \
---service-account=$ServiceAccount \
+--image=${IMAGE_NAME} \
+--service-account=${SERVICE_ACCOUNT} \
 --ingress=internal \
 --no-allow-unauthenticated \
 --region=asia-northeast3 \
 ```
 
 ## How to call on GCP with Cloud Run
+
+```bash
+curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" ${CLOUD_RUN_URL}/healthcheck
+```
