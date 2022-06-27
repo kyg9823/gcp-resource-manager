@@ -3,8 +3,8 @@ package router
 import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
-	"github.com/kyg9823/gcp-resource-manager/handler/aws"
-	"github.com/kyg9823/gcp-resource-manager/handler/gcp"
+	"github.com/kyg9823/gcp-resource-manager/handlers/aws"
+	"github.com/kyg9823/gcp-resource-manager/handlers/gcp"
 )
 
 func SetupRouters(app *fiber.App) {
